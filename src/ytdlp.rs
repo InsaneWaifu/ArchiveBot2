@@ -10,7 +10,8 @@ pub struct YoutubeDownloader {}
 impl Downloader for YoutubeDownloader {
     async fn download(&self, url: String) -> Result<(String, tempfile::NamedTempFile), anyhow::Error> {
         let tempfile = tempfile::NamedTempFile::with_suffix(".mp4")?;
-        let output = tokio::process::Command::new("yt-dlp")
+        let mut output = tokio::process::Command::new("yt-dlp");
+        output
             .arg("-o")
             .arg(tempfile.path())
             .arg("--recode-video")
@@ -24,7 +25,11 @@ impl Downloader for YoutubeDownloader {
             .arg("--no-simulate")
             .arg("--progress")
             .arg("--print")
-            .arg("VIDEOTITLE((![[%(title)s]]!))")
+            .arg("VIDEOTITLE((![[%(title)s]]!))");
+        if std::env::var("YTDLP_COOKIES_FILE").is_ok() {
+            output.arg("--cookies").arg(std::env::var("YTDLP_COOKIES_FILE").unwrap());
+        };
+        let output = output
             .arg(&url)
             .output()
             .await?;
