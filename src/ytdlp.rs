@@ -1,6 +1,5 @@
-use std::io::BufRead;
-
 use poise::serenity_prelude::async_trait;
+use tokio::io::AsyncBufReadExt;
 
 use crate::downloader::Downloader;
 
@@ -10,8 +9,8 @@ pub struct YoutubeDownloader {}
 impl Downloader for YoutubeDownloader {
     async fn download(&self, url: String) -> Result<(String, tempfile::NamedTempFile), anyhow::Error> {
         let tempfile = tempfile::NamedTempFile::with_suffix(".mp4")?;
-        let mut output = tokio::process::Command::new("yt-dlp");
-        output
+        let mut command = tokio::process::Command::new("yt-dlp");
+        command
             .arg("-o")
             .arg(tempfile.path())
             .arg("--recode-video")
@@ -27,22 +26,30 @@ impl Downloader for YoutubeDownloader {
             .arg("--print")
             .arg("VIDEOTITLE((![[%(title)s]]!))");
         if std::env::var("YTDLP_COOKIES_FILE").is_ok() {
-            output.arg("--cookies").arg(std::env::var("YTDLP_COOKIES_FILE").unwrap());
+            command.arg("--cookies").arg(std::env::var("YTDLP_COOKIES_FILE").unwrap());
         };
-        let output = output
-            .arg(&url)
-            .output()
-            .await?;
-        anyhow::ensure!(output.status.success(), "youtube-dl failed with output {output:?}");
-        // Look for a line with VIDEOTITLE(...)
-        for line in output.stdout.lines() {
-            let line = line?;
+        command
+            .arg(&url);
+        // We want to capture stdout but also log it with tracing-appender
+        command.stdout(std::process::Stdio::piped());
+        let mut child = command.spawn()?;
+        
+        
+        let stdout = child.stdout.take().unwrap();
+        let bufreader = tokio::io::BufReader::new(stdout);
+        let mut lines = bufreader.lines();
+        let mut vidtitle = None;
+        while let Ok(Some(line)) = lines.next_line().await {
+            tracing::info!("{}", line);
             if line.starts_with("VIDEOTITLE") {
                 let title = line.split("((![[").nth(1).unwrap();
                 let title = title.split("]]!").nth(0).unwrap();
-                return Ok((title.to_owned(), tempfile));
+                vidtitle = Some(title.to_owned());
             }
         }
-        Ok((url, tempfile))
+        let status = child.wait().await?; 
+        anyhow::ensure!(status.success(), "youtube-dl failed");
+
+        Ok((vidtitle.unwrap_or(url), tempfile))
     }
 }
