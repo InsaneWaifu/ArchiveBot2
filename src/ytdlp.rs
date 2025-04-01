@@ -29,6 +29,7 @@ impl Downloader for YoutubeDownloader {
             command.arg("--cookies").arg(std::env::var("YTDLP_COOKIES_FILE").unwrap());
         };
         command
+            .arg("--no-quiet")
             .arg(&url);
         // We want to capture stdout but also log it with tracing-appender
         command.stdout(std::process::Stdio::piped());
