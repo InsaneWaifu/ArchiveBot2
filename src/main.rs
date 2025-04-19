@@ -1,23 +1,22 @@
 use std::{
     any::TypeId,
     collections::{HashMap, VecDeque},
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Error;
 use db::{NewObject, Object, SharexConfig, User};
-use diesel::query_dsl::methods::FilterDsl;
 use downloader::Downloader;
 use poise::{
     CreateReply,
     serenity_prelude::{
-        self as serenity, ComponentInteractionDataKind, CreateActionRow, CreateAttachment,
-        CreateButton, CreateEmbed, CreateInteractionResponseFollowup, CreateSelectMenu,
-        CreateSelectMenuOption, Embed, Interaction, MessageCommandInteractionMetadata,
-        MessageInteractionMetadata,
+        self as serenity, ComponentInteractionDataKind, CreateActionRow, CreateAttachment, CreateEmbed, CreateInteractionResponseFollowup, CreateSelectMenu,
+        CreateSelectMenuOption, Interaction,
     },
 };
 use pp::{FFMpegResizeProcessor, PostProcessInput, PostProcessor};
+use tokio_schedule::Job;
+use tracing::info;
 use ytdlp::YoutubeDownloader;
 mod db;
 mod downloader;
@@ -190,6 +189,7 @@ async fn ytdlp(ctx: Context<'_>, #[description = "Video URL"] url: String) -> Re
 #[poise::command(slash_command, install_context = "Guild|User", interaction_context = "Guild|BotDm|PrivateChannel")]
 async fn my_objects(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer().await?;
+    let time_unix_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let user_id = ctx.author().id.get() as i64;
     let objects = ctx
         .data()
@@ -202,6 +202,7 @@ async fn my_objects(ctx: Context<'_>) -> Result<(), Error> {
             diesel::QueryDsl::filter(objects, user.eq(user_id))
                 .select(Object::as_select())
                 .order_by(expiry_unix.desc())
+                .filter(expiry_unix.gt(time_unix_now))
                 .load(x)
         })
         .await
@@ -435,6 +436,8 @@ async fn main() {
     let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
     let intents = serenity::GatewayIntents::non_privileged();
 
+    let pool = db::create_database_pool().await;
+    let pool2 = pool.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![ytdlp(), my_objects(), get_object(), upload_xbackbone_config()],
@@ -449,11 +452,27 @@ async fn main() {
                 )
                 .await?;
                 Ok(Data {
-                    db: db::create_database_pool().await,
+                    db: pool,
                 })
             })
         })
         .build();
+
+
+    
+    tokio::spawn(
+        tokio_schedule::every(10).minutes().perform(
+            move || {
+                let pool2 = pool2.clone();
+                async move {
+                    info!("Running cleanup job");
+                    pool2.get().await.unwrap().interact(move |x| {
+                        db::delete_expired_files(x)
+                    }).await.unwrap().unwrap()
+                }
+            }
+        )
+    );
 
     let client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)

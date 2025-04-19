@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use deadpool_diesel::{Manager, Pool};
 use diesel::prelude::*;
 
@@ -108,4 +110,12 @@ pub async fn create_database_pool() -> DatabasePool {
     let manager = deadpool_diesel::Manager::new(database_url, deadpool::Runtime::Tokio1);
     let pool = Pool::builder(manager).max_size(8).build().unwrap();
     pool
+}
+
+
+pub fn delete_expired_files(conn: &mut SqliteConnection) -> anyhow::Result<()> {
+    let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    use crate::schema::objects::dsl::*;
+    diesel::delete(objects.filter(expiry_unix.lt(unix_time))).execute(conn)?;
+    Ok(())
 }

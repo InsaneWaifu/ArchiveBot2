@@ -44,7 +44,7 @@ impl Downloader for YoutubeDownloader {
             tracing::info!("{}", line);
             if line.starts_with("VIDEOTITLE") {
                 let title = line.split("((![[").nth(1).unwrap();
-                let title = title.split("]]!").nth(0).unwrap();
+                let title = title.split("]]!))").nth(0).unwrap();
                 vidtitle = Some(title.to_owned());
             }
         }
